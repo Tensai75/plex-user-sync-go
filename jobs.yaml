@@ -1,0 +1,16 @@
+# Example jobs configuration.
+# The program will run each listed job either in daemon mode or
+# as a one-time execution depending on the command line flag.
+# If the flag --dry-run/-n is used, it applies to all jobs.
+jobs:
+  #  Sync John Doe -> Dave every 5 minutes.
+  - source_user: John Doe
+    target_user: Dave
+    bi_directional: false
+    interval_minutes: 5
+
+  #  Sync Charlie <-> Alice every 10 minutes.
+  - source_user: Charlie
+    target_user: Alice
+    bi_directional: true
+    interval_minutes: 10

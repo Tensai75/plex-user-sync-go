@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/Tensai75/logger"
 )
 
 type Job struct {
@@ -16,34 +18,70 @@ type Job struct {
 
 // Global variables
 var (
-	appName            = "Plex User Sync Go" // Application name
-	appVersion         = "1.0.0"             // Application version
-	Log                = NewLogger()         // Global logger instance
-	daemonSyncInterval = 5                   // Default daemon sync interval in minutes
-	maxErrors          = 3                   // Default maximum number of consecutive errors before stopping the daemon
-	busyTimeout        = 60                  // Default database busy timeout in seconds
-	appExeName         = filepath.Base(os.Args[0])
+	// Application constants
+	appName    = "Plex User Sync Go"       // Application name
+	appVersion = "v1.1.0"                  // Application version
+	appExeName = filepath.Base(os.Args[0]) // Application executable name
+
+	// Default config settings
+	dbPath             = defaultDBPath()      // Default database path
+	logToFile          = false                // Default setting for logging to file
+	logFilePath        = defaultLogFilePath() // Default log file path
+	logLevel           = 2                    // Default log level (0 = none, 1 = debug, 2 = info, 3 = warn, 4 = success, 5 = error, 6 = fatal)
+	logMaxSizeMB       = 50                   // Default maximum log file size in MB; 0 disables rotation
+	logMaxBackups      = 5                    // Default maximum number of rotated log files to keep
+	logMaxAgeDays      = 30                   // Default maximum age in days for rotated log files
+	logCompress        = true                 // Default compression setting for rotated log files
+	logToConsole       = true                 // Default setting to write logs to console
+	dryRun             = false                // Default dry run setting
+	biDirectional      = false                // Default bi-directional sync setting
+	bulkMode           = false                // Default bulk mode setting
+	daemon             = false                // Default daemon mode setting
+	daemonSyncInterval = 5                    // Default daemon sync interval in minutes
+	maxErrors          = 3                    // Default maximum number of consecutive errors before stopping the daemon
+	busyTimeout        = 60                   // Default database busy timeout in seconds
+
+	// Global logger instance
+	log = logger.NewLogger()
 )
 
 func main() {
 	// Parse command-line flags and configuration
 	config, err := ParseFlags()
 	if err != nil {
-		Log.Fatal("failed to parse flags: %v", err)
+		log.Fatal("failed to parse flags: %v", err)
 	}
 
-	// Initialize the logger if logging is enabled
-	if config.Log && config.LogFile != "" {
-		err = Log.SetLogFile(config.LogFile)
-		if err != nil {
-			Log.Fatal("failed to initialize logger: %v", err)
-		}
-		defer Log.Close()
+	// Configure the logger
+	err = log.SetConfig(logger.LoggerConfig{
+		LogLevel:          logger.LogLevel(config.LogLevel),
+		LogFilePath:       config.LogFile,
+		LogFileMaxSizeMB:  config.LogMaxSizeMB,
+		LogFileMaxBackups: config.LogMaxBackups,
+		LogFileMaxAgeDays: config.LogMaxAgeDays,
+		LogFileCompress:   config.LogCompress,
+		WriteToConsole:    config.LogToConsole,
+	})
+	if err != nil {
+		log.Fatal("failed to set logger configuration: %v", err)
 	}
+
+	// Ensure the logger is closed when the application exits.
+	defer func() {
+		if err := log.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+
+	// Set the error handler function for the logger
+	log.SetErrorHandler(func(err error) {
+		// Panic on logger errors to ensure they are not silently ignored.
+		panic(fmt.Errorf("logger error: %w", err))
+	})
 
 	// Run the main application logic and handle any errors
 	if err := run(config); err != nil {
-		Log.Fatal("%v", err)
+		log.Fatal("%v", err)
 	}
 }
 
@@ -51,7 +89,7 @@ func main() {
 // Don't use os.Exit() here, as it will prevent deferred functions from running.
 func run(config *Config) error {
 	// Log the application start message
-	Log.Info("%s %s started", appName, appVersion)
+	log.Info("%s %s started", appName, appVersion)
 
 	// Create the PlexDatabase instance
 	plexDB, err := NewPlexDatabase(config.DBPath, config.BusyTimeoutSeconds*1000) // Convert seconds to milliseconds
@@ -134,7 +172,7 @@ func runDaemon(jobs []*Job) error {
 	// Start a goroutine for each job to run it in daemon mode
 	for _, job := range jobs {
 		daemonWG.Add(1)
-		Log.Info("%sstarting daemon for sync job '%s'", isDryRun(job.plexJob.DryRun), job.plexJob.JobName)
+		log.Info("%sstarting daemon for sync job '%s'", isDryRun(job.plexJob.DryRun), job.plexJob.JobName)
 
 		go func(job *Job) {
 			defer daemonWG.Done()
@@ -147,12 +185,13 @@ func runDaemon(jobs []*Job) error {
 				if err != nil {
 					errorsCount++
 					if errorsCount >= job.maxErrors {
-						Log.Error("max errors reached for sync job '%s', stopping daemon", job.plexJob.JobName)
+						log.Error("max errors reached for sync job '%s', stopping daemon", job.plexJob.JobName)
 						return
 					}
+				} else {
+					errorsCount = 0 // Reset error count on successful run
 				}
-				errorsCount = 0 // Reset error count on successful run
-				Log.Info("%swaiting %d minutes before next run of sync job '%s'", isDryRun(job.plexJob.DryRun), job.intervalMinutes, job.plexJob.JobName)
+				log.Info("%swaiting %d minutes before next run of sync job '%s'", isDryRun(job.plexJob.DryRun), job.intervalMinutes, job.plexJob.JobName)
 				time.Sleep(time.Duration(job.intervalMinutes) * time.Minute)
 			}
 		}(job)
@@ -184,30 +223,30 @@ func runJobs(jobs []*Job) error {
 
 // runJob executes a single PlexSyncJob and logs the results, including handling dry run scenarios.
 func runJob(job *PlexSyncJob) error {
-	Log.Info("%srunning sync job '%s'", isDryRun(job.DryRun), job.JobName)
+	log.Info("%srunning sync job '%s'", isDryRun(job.DryRun), job.JobName)
 
 	// Execute the sync job and capture the statistics and any errors
 	stats, err := job.Run()
 	if err != nil {
-		Log.Error("%ssync job '%s' failed: %v", isDryRun(job.DryRun), job.JobName, err)
+		log.Error("%ssync job '%s' failed: %v", isDryRun(job.DryRun), job.JobName, err)
 		return err
 	}
-	Log.Info("%ssync job '%s' completed", isDryRun(job.DryRun), job.JobName)
+	log.Info("%ssync job '%s' completed", isDryRun(job.DryRun), job.JobName)
 
 	// Handle dry run results by logging the number of items that would have been synced without making any changes
 	if job.DryRun {
-		Log.Info("DRY RUN: %d watch item%s would have been synced to target user '%s'", stats.ToSyncToTarget, pluralSuffix(stats.ToSyncToTarget), job.TargetUser)
+		log.Info("DRY RUN: %d watch item%s would have been synced to target user '%s'", stats.ToSyncToTarget, pluralSuffix(stats.ToSyncToTarget), job.TargetUser)
 		if job.BiDirectional {
-			Log.Info("DRY RUN: %d watch item%s would have been synced to source user '%s'", stats.ToSyncToSource, pluralSuffix(stats.ToSyncToSource), job.SourceUser)
+			log.Info("DRY RUN: %d watch item%s would have been synced to source user '%s'", stats.ToSyncToSource, pluralSuffix(stats.ToSyncToSource), job.SourceUser)
 		}
-		Log.Info("DRY RUN: no changes were made")
+		log.Info("DRY RUN: no changes were made")
 		return nil
 	}
 
 	// Log the sync results for the job
-	Log.Info("%d of %d watch items synced to target user '%s'", stats.SyncedToTarget, stats.ToSyncToTarget, job.TargetUser)
+	log.Info("%d of %d watch items synced to target user '%s'", stats.SyncedToTarget, stats.ToSyncToTarget, job.TargetUser)
 	if job.BiDirectional {
-		Log.Info("%d of %d watch items synced to source user '%s'", stats.SyncedToSource, stats.ToSyncToSource, job.SourceUser)
+		log.Info("%d of %d watch items synced to source user '%s'", stats.SyncedToSource, stats.ToSyncToSource, job.SourceUser)
 	}
 	return nil
 }

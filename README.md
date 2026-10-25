@@ -5,7 +5,7 @@
 
 Plex User Sync Go synchronizes Plex watch history between users by updating the Plex Media Server database. Run one-off syncs or schedule recurring jobs.
 
-This tool was created for personal use and is provided as-is, without any guarantee that it will work for your environment or use case. Use it at your own risk.
+This tool was created for my personal use and is provided as-is, without any guarantee that it will work for your environment or use case. Use it at your own risk.
 
 **Warning: This tool directly edits the Plex database. Back up the database before using it.**
 
@@ -17,6 +17,7 @@ This tool was created for personal use and is provided as-is, without any guaran
 - Bulk mode to replace the target user's watch history with the source user's history
 - Daemon mode for periodic syncs
 - YAML configuration for multiple sync jobs
+- Optional logging with log levels and log file rotation
 
 ## Requirements
 
@@ -66,7 +67,7 @@ This copies newer watch state from `user1` to `user2`.
 ./plex-user-sync-go --dry-run user1 user2
 ```
 
-Preview the changes without modifying the database.
+Preview the changes without modifying the watch history.
 
 ### Bi-directional sync
 
@@ -119,19 +120,25 @@ This runs the sync every 5 minutes. For YAML jobs, each job uses its own `interv
 
 ## Options
 
-| Option             | Short | Description                                            |
-| ------------------ | ----- | ------------------------------------------------------ |
-| `--db`             | `-d`  | Plex database file path                                |
-| `--dry-run`        | `-n`  | Preview changes without modifying the database         |
-| `--bi-directional` | `-b`  | Synchronize in both directions                         |
-| `--bulk`           | `-k`  | Replace the target's watch history with the source's   |
-| `--daemon`         | `-D`  | Repeatedly run sync jobs                               |
-| `--interval`       | `-i`  | Single-job daemon interval in minutes (default: 5)     |
-| `--max-errors`     | `-e`  | Consecutive errors allowed per daemon job (default: 3) |
-| `--jobs-config`    | `-j`  | YAML file containing sync jobs                         |
-| `--log`            | `-l`  | Enable logging to a file                               |
-| `--log-file`       | `-f`  | Log file path (used with `--log`)                      |
-| `--busy-timeout`   | `-t`  | SQLite busy timeout in seconds (default: 60)           |
+| Option              | Short | Description                                                                    |
+| ------------------- | ----- | ------------------------------------------------------------------------------ |
+| `--db`              | `-d`  | Plex database file path                                                        |
+| `--dry-run`         | `-n`  | Preview changes without modifying the watch history                            |
+| `--bi-directional`  | `-b`  | Synchronize in both directions                                                 |
+| `--bulk`            | `-k`  | Replace the target's watch history with the source's                           |
+| `--daemon`          | `-D`  | Repeatedly run sync jobs                                                       |
+| `--interval`        | `-i`  | Single-job daemon interval in minutes (default: 5)                             |
+| `--max-errors`      | `-e`  | Consecutive errors allowed per daemon job (default: 3)                         |
+| `--jobs-config`     | `-j`  | YAML file containing sync jobs                                                 |
+| `--log`             | `-l`  | Enable logging to a file                                                       |
+| `--log-level`       | `-L`  | Log level (0 - 6; default: 2 = Info)                                           |
+| `--log-file`        | `-f`  | Log file path (used with `--log`)                                              |
+| `--log-max-size`    |       | Maximum log size in MB before rotation (default: 50; `0` disables rotation)    |
+| `--log-max-backups` |       | Maximum rotated log files to keep (default: 5; `0` keeps all)                  |
+| `--log-max-age`     |       | Maximum age in days for rotated logs (default: 30; `0` disables age cleanup)   |
+| `--log-compress`    |       | Compress rotated logs (default: `true`; use `--log-compress=false` to disable) |
+| `--log-console`     |       | Write logs to console (default: `true`; use `--log-console=false` to disable)  |
+| `--busy-timeout`    |       | SQLite busy timeout in seconds (default: 60)                                   |
 
 ## Plex database location
 
@@ -145,7 +152,8 @@ If detection does not find the database, provide its path with `--db` / `-d`.
 
 ## Logging
 
-The application always writes messages to standard output. File logging is optional and must be enabled with `--log` / `-l`; this works in both one-off and daemon modes.
+File logging is optional and must be enabled with `--log` / `-l`; this works in both one-off and daemon modes.
+The log information is also written to the console by default. To disable console logging, use `--log-console=false`.
 
 Default log file locations:
 
@@ -157,6 +165,8 @@ Set a different log path with `--log-file` / `-f` while enabling file logging, f
 ```bash
 ./plex-user-sync-go --log --log-file ./plex-user-sync-go.log user1 user2
 ```
+
+By default, logs rotate when the active file reaches 50 MB. Up to 5 rotated files are kept, files older than 30 days are removed during rotation cleanup, and rotated files are compressed. For example, `--log-max-size 10 --log-max-backups 3 --log-max-age 14` sets a 10 MB limit, keeps at most 3 backups, and removes backups older than 14 days. Set `--log-max-size 0` to disable rotation; the backup, age, and compression options then have no effect. Set `--log-compress=false` to keep rotated files uncompressed.
 
 ## Important
 

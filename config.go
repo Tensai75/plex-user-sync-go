@@ -18,8 +18,14 @@ type Config struct {
 	Daemon             bool
 	IntervalMinutes    int
 	MaxErrors          int
-	Log                bool
+	LogToFile          bool
 	LogFile            string
+	LogLevel           int
+	LogMaxSizeMB       int
+	LogMaxBackups      int
+	LogMaxAgeDays      int
+	LogCompress        bool
+	LogToConsole       bool
 	JobsConfig         string
 	BusyTimeoutSeconds int
 }
@@ -28,17 +34,23 @@ type Config struct {
 func ParseFlags() (*Config, error) {
 	cfg := &Config{}
 
-	pflag.StringVarP(&cfg.DBPath, "db", "d", DefaultDBPath, "Database path")
-	pflag.BoolVarP(&cfg.DryRun, "dry-run", "n", false, "Preview only")
-	pflag.BoolVarP(&cfg.BiDirectional, "bi-directional", "b", false, "Sync both directions (newer status wins)")
-	pflag.BoolVarP(&cfg.BulkMode, "bulk", "k", false, "Bulk copy sync (deletes target watch history)")
-	pflag.BoolVarP(&cfg.Daemon, "daemon", "D", false, "Run as daemon and sync every X seconds")
+	pflag.StringVarP(&cfg.DBPath, "db", "d", dbPath, "Database path")
+	pflag.BoolVarP(&cfg.DryRun, "dry-run", "n", dryRun, "Preview only")
+	pflag.BoolVarP(&cfg.BiDirectional, "bi-directional", "b", biDirectional, "Sync both directions (newer status wins)")
+	pflag.BoolVarP(&cfg.BulkMode, "bulk", "k", bulkMode, "Bulk copy sync (deletes target watch history)")
+	pflag.BoolVarP(&cfg.Daemon, "daemon", "D", daemon, "Run as daemon and sync every X seconds")
 	pflag.IntVarP(&cfg.IntervalMinutes, "interval", "i", daemonSyncInterval, "Daemon sync interval in minutes")
 	pflag.IntVarP(&cfg.MaxErrors, "max-errors", "e", maxErrors, "Maximum number of consecutive errors before stopping the daemon")
-	pflag.BoolVarP(&cfg.Log, "log", "l", false, "Enable logging to file")
-	pflag.StringVarP(&cfg.LogFile, "log-file", "f", DefaultLogFilePath, "Path to log file")
 	pflag.StringVarP(&cfg.JobsConfig, "jobs-config", "j", "", "YAML file containing jobs to sync")
-	pflag.IntVarP(&cfg.BusyTimeoutSeconds, "busy-timeout", "t", busyTimeout, "SQLite busy timeout in seconds")
+	pflag.BoolVarP(&cfg.LogToFile, "log", "l", logToFile, "Enable logging to file")
+	pflag.StringVarP(&cfg.LogFile, "log-file", "f", logFilePath, "Path to log file")
+	pflag.IntVarP(&cfg.LogLevel, "log-level", "L", logLevel, "Log level (0 = none, 1 = debug, 2 = info, 3 = warn, 4 = success, 5 = error, 6 = fatal)")
+	pflag.IntVar(&cfg.LogMaxSizeMB, "log-max-size", logMaxSizeMB, "Maximum log file size in MB; 0 disables rotation")
+	pflag.IntVar(&cfg.LogMaxBackups, "log-max-backups", logMaxBackups, "Maximum number of rotated log files to keep")
+	pflag.IntVar(&cfg.LogMaxAgeDays, "log-max-age", logMaxAgeDays, "Maximum age in days for rotated log files")
+	pflag.BoolVar(&cfg.LogCompress, "log-compress", logCompress, "Compress rotated log files")
+	pflag.BoolVar(&cfg.LogToConsole, "log-console", logToConsole, "Write logs to console")
+	pflag.IntVar(&cfg.BusyTimeoutSeconds, "busy-timeout", busyTimeout, "SQLite busy timeout in seconds")
 
 	pflag.Usage = func() {
 		fmt.Printf("%s %s\n", appName, appVersion)
@@ -94,9 +106,21 @@ func ParseFlags() (*Config, error) {
 	}
 
 	// Validate that the log file path exists
-	if cfg.Log && cfg.LogFile == "" {
+	if cfg.LogToFile && cfg.LogFile == "" {
 		pflag.Usage()
 		return nil, fmt.Errorf("could not determine default log file path; --log-file is required when logging is enabled")
+	}
+
+	// Validate that the log level is within the valid range
+	if cfg.LogLevel < 0 || cfg.LogLevel > 6 {
+		pflag.Usage()
+		return nil, fmt.Errorf("invalid log level: must be between 0 and 6")
+	}
+
+	// Validate that the log rotation limits
+	if cfg.LogToFile && (cfg.LogMaxSizeMB < 0 || cfg.LogMaxBackups < 0 || cfg.LogMaxAgeDays < 0) {
+		pflag.Usage()
+		return nil, fmt.Errorf("log rotation limits cannot be negative")
 	}
 
 	// Validate that the daemon interval is greater than 0 seconds when running in daemon mode
@@ -125,6 +149,11 @@ func ParseFlags() (*Config, error) {
 	if cfg.BulkMode && cfg.Daemon {
 		pflag.Usage()
 		return nil, fmt.Errorf("bulk mode cannot be used in daemon mode")
+	}
+
+	// Ensure that log file is empty if logging to file is not enabled
+	if !cfg.LogToFile {
+		cfg.LogFile = ""
 	}
 
 	return cfg, nil
